@@ -18,26 +18,9 @@ interface Transacao {
   pessoaId: string;
 }
 
-interface TotaisPessoa {
-  id: string;
-  nome: string;
-  idade: number;
-  totalReceitas: number;
-  totalDespesas: number;
-  saldo: number;
-}
-
-interface ResumoGeral {
-  totalReceitas: number;
-  totalDespesas: number;
-  saldoLiquido: number;
-}
-
 function App() {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [transacoes, setTransacoes] = useState<Transacao[]>([]);
-  const [totaisPessoas, setTotaisPessoas] = useState<TotaisPessoa[]>([]);
-  const [resumo, setResumo] = useState<ResumoGeral>({ totalReceitas: 0, totalDespesas: 0, saldoLiquido: 0 });
 
   const [nome, setNome] = useState('');
   const [idade, setIdade] = useState('');
@@ -55,15 +38,12 @@ function App() {
   const carregarDados = async () => {
     try {
       const timestamp = new Date().getTime();
-      const [resPessoas, resTotais, resTransacoes] = await Promise.all([
+      const [resPessoas, resTransacoes] = await Promise.all([
         axios.get(`${API_URL}/Pessoas?t=${timestamp}`),
-        axios.get(`${API_URL}/Pessoas/Totais?t=${timestamp}`),
         axios.get(`${API_URL}/Transacoes?t=${timestamp}`)
       ]);
 
       setPessoas(resPessoas.data || []);
-      setTotaisPessoas(resTotais.data.pessoas || []);
-      setResumo(resTotais.data.resumoGeral || { totalReceitas: 0, totalDespesas: 0, saldoLiquido: 0 });
       setTransacoes(resTransacoes.data || []);
     } catch (err) {
       console.error('Erro ao carregar dados:', err);
@@ -91,16 +71,17 @@ function App() {
     }
 
     try {
-      const res = await axios.post(`${API_URL}/Pessoas`, {
+      const resp = await axios.post(`${API_URL}/Pessoas`, {
         nome,
         idade: parseInt(idade, 10),
       });
 
-      setPessoas((prev) => [...prev, res.data]);
+      // Adiciona direto na lista da tela
+      if (resp.data) {
+        setPessoas((prev) => [...prev, resp.data]);
+      }
       setNome('');
       setIdade('');
-
-      await carregarDados();
     } catch (err: any) {
       setMensagemErro(err.response?.data || 'Erro ao cadastrar pessoa.');
     }
@@ -124,19 +105,30 @@ function App() {
     }
 
     try {
-      await axios.post(`${API_URL}/Transacoes`, {
+      const resp = await axios.post(`${API_URL}/Transacoes`, {
         descricao,
         valor: valorNumerico,
         tipo: tipoNumerico,
         pessoaId,
       });
 
+      // Pega o objeto salvo retornado pela API
+      const novaTransacao = resp.data || {
+        id: Math.random().toString(),
+        descricao,
+        valor: valorNumerico,
+        tipo: tipoNumerico,
+        pessoaId,
+      };
+
+      // Força a atualização do estado local INSTANTANEAMENTE
+      setTransacoes((prev) => [...prev, novaTransacao]);
+
+      // Reseta os campos do formulário
       setDescricao('');
       setValor('');
       setPessoaId('');
       setTipo(0);
-
-      await carregarDados();
     } catch (err: any) {
       setMensagemErro(err.response?.data || 'Erro ao cadastrar transação.');
     }
@@ -145,7 +137,8 @@ function App() {
   const deletarPessoa = async (id: string) => {
     try {
       await axios.delete(`${API_URL}/Pessoas/${id}`);
-      await carregarDados();
+      setPessoas((prev) => prev.filter((p) => p.id.toLowerCase() !== id.toLowerCase()));
+      setTransacoes((prev) => prev.filter((t) => t.pessoaId.toLowerCase() !== id.toLowerCase()));
     } catch (err) {
       console.error('Erro ao deletar pessoa:', err);
     }
@@ -155,6 +148,40 @@ function App() {
     const p = pessoas.find((item) => item.id.toLowerCase() === id.toLowerCase());
     return p ? p.nome : 'Desconhecido';
   };
+
+  // Cálculo de Totais dinâmico e reativo
+  const totaisPessoas = pessoas.map((p) => {
+    const transacoesDaPessoa = transacoes.filter(
+      (t) => t.pessoaId && t.pessoaId.toLowerCase() === p.id.toLowerCase()
+    );
+
+    const totalReceitas = transacoesDaPessoa
+      .filter((t) => Number(t.tipo) === 1)
+      .reduce((acc, t) => acc + Number(t.valor), 0);
+
+    const totalDespesas = transacoesDaPessoa
+      .filter((t) => Number(t.tipo) === 0)
+      .reduce((acc, t) => acc + Number(t.valor), 0);
+
+    return {
+      id: p.id,
+      nome: p.nome,
+      idade: p.idade,
+      totalReceitas,
+      totalDespesas,
+      saldo: totalReceitas - totalDespesas,
+    };
+  });
+
+  const resumoGeral = totaisPessoas.reduce(
+    (acc, p) => {
+      acc.totalReceitas += p.totalReceitas;
+      acc.totalDespesas += p.totalDespesas;
+      acc.saldoLiquido += p.saldo;
+      return acc;
+    },
+    { totalReceitas: 0, totalDespesas: 0, saldoLiquido: 0 }
+  );
 
   return (
     <div style={{ padding: '20px', fontFamily: 'sans-serif', maxWidth: '850px', margin: '0 auto' }}>
@@ -278,9 +305,9 @@ function App() {
 
         <div style={{ marginTop: '20px', padding: '10px', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
           <h3>Resumo Geral da Residência</h3>
-          <p>Total Receitas: <strong style={{ color: 'green' }}>R$ {resumo.totalReceitas.toFixed(2)}</strong></p>
-          <p>Total Despesas: <strong style={{ color: 'red' }}>R$ {resumo.totalDespesas.toFixed(2)}</strong></p>
-          <p>Saldo Líquido: <strong>R$ {resumo.saldoLiquido.toFixed(2)}</strong></p>
+          <p>Total Receitas: <strong style={{ color: 'green' }}>R$ {resumoGeral.totalReceitas.toFixed(2)}</strong></p>
+          <p>Total Despesas: <strong style={{ color: 'red' }}>R$ {resumoGeral.totalDespesas.toFixed(2)}</strong></p>
+          <p>Saldo Líquido: <strong>R$ {resumoGeral.saldoLiquido.toFixed(2)}</strong></p>
         </div>
       </section>
 
